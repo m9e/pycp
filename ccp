@@ -71,9 +71,19 @@ def process_files(files, ignore_ignore):
                 lines = read_file(file_path)
                 relative_path = os.path.relpath(file_path, os.getcwd())
                 comment_prefix = get_comment_prefix(file_path)
-                check_lines = lines[:3] if lines and lines[0].startswith('#!') else lines[:1]
-                if not any(relative_path in line for line in check_lines):
-                    lines.insert(0, f"{comment_prefix} {relative_path}\n")
+                
+                # Check if the first line is a shebang
+                if lines and lines[0].startswith('#!'):
+                    shebang_line = lines.pop(0)
+                    check_lines = lines[:2]  # Check the next two lines for the relative path comment
+                    if not any(relative_path in line for line in check_lines):
+                        lines.insert(0, f"{comment_prefix} {relative_path}\n")
+                    lines.insert(0, shebang_line)
+                else:
+                    check_lines = lines[:1]  # Check the first line for the relative path comment
+                    if not any(relative_path in line for line in check_lines):
+                        lines.insert(0, f"{comment_prefix} {relative_path}\n")
+                
                 all_contents.extend(lines)
                 all_contents.append("\n")
 
