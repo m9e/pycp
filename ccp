@@ -35,13 +35,28 @@ def read_file(filepath):
         print(f"Error reading file {filepath}: {str(e)}", file=sys.stderr)
         return []
 
-def get_comment_prefix(filepath):
-    if filepath.endswith('.js'):
-        return '//'
-    elif filepath.endswith('.py'):
-        return '#'
-    else:
-        return '#'
+def get_comment_prefix_suffix(filepath):
+    """
+    Returns the appropriate comment prefix and suffix based on the file extension.
+    """
+    extension_to_comment = {
+        '.js': ('//', ''),
+        '.py': ('#', ''),
+        '.java': ('//', ''),
+        '.c': ('//', ''),
+        '.cpp': ('//', ''),
+        '.h': ('//', ''),
+        '.sh': ('#', ''),
+        '.rb': ('#', ''),
+        '.php': ('//', ''),
+        '.sql': ('--', ''),
+        '.html': ('<!--', '-->'),
+        '.xml': ('<!--', '-->'),
+        '.md': ('<!--', '-->'),
+    }
+    
+    _, ext = os.path.splitext(filepath)
+    return extension_to_comment.get(ext, ('#', ''))
 
 def load_gitignore_files(directory):
     gitignore_matchers = []
@@ -70,19 +85,19 @@ def process_files(files, ignore_ignore):
             if ignore_ignore or not is_ignored:
                 lines = read_file(file_path)
                 relative_path = os.path.relpath(file_path, os.getcwd())
-                comment_prefix = get_comment_prefix(file_path)
+                comment_prefix, comment_suffix = get_comment_prefix_suffix(file_path)
                 
                 # Check if the first line is a shebang
                 if lines and lines[0].startswith('#!'):
                     shebang_line = lines.pop(0)
                     check_lines = lines[:2]  # Check the next two lines for the relative path comment
                     if not any(relative_path in line for line in check_lines):
-                        lines.insert(0, f"{comment_prefix} {relative_path}\n")
+                        lines.insert(0, f"{comment_prefix} {relative_path} {comment_suffix}\n")
                     lines.insert(0, shebang_line)
                 else:
                     check_lines = lines[:1]  # Check the first line for the relative path comment
                     if not any(relative_path in line for line in check_lines):
-                        lines.insert(0, f"{comment_prefix} {relative_path}\n")
+                        lines.insert(0, f"{comment_prefix} {relative_path} {comment_suffix}\n")
                 
                 all_contents.extend(lines)
                 all_contents.append("\n")
