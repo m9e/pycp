@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-    """collate files from multiple directories with gitignore support and headers,
-    extremely useful for passing many files to LLMs
 
-    """
+"""collate files from multiple directories with gitignore support and headers,
+extremely useful for passing many files to LLMs
+
+"""
 
 import os
 import sys

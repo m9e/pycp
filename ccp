@@ -104,7 +104,9 @@ def process_files(files, ignore_ignore):
 
     if all_contents:
         try:
-            pyperclip.copy(''.join(all_contents))
+            # Add a blank line between files
+            clipboard_content = '\n'.join(all_contents)
+            pyperclip.copy(clipboard_content)
             print("Copied to clipboard.")
         except Exception as e:
             print(f"Error copying to clipboard: {str(e)}", file=sys.stderr)
