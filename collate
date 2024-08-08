@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+    """collate files from multiple directories with gitignore support and headers,
+    extremely useful for passing many files to LLMs
+
+    """
+
+import os
+import sys
+import argparse
+from gitignore_parser import parse_gitignore
+
+def load_gitignore_files(directory):
+    gitignore_matchers = []
+    current_dir = directory
+    while current_dir != os.path.dirname(current_dir):  # Stop at the root directory
+        gitignore_path = os.path.join(current_dir, '.gitignore')
+        if os.path.exists(gitignore_path):
+            gitignore_matchers.append(parse_gitignore(gitignore_path))
+        current_dir = os.path.dirname(current_dir)
+    # Check the current working directory's .gitignore
+    cwd_gitignore_path = os.path.join(os.getcwd(), '.gitignore')
+    if os.path.exists(cwd_gitignore_path):
+        gitignore_matchers.append(parse_gitignore(cwd_gitignore_path))
+    return gitignore_matchers
+
+def is_file_ignored_by_gitignore(file_path, gitignore_matchers):
+    return any(matcher(file_path) for matcher in gitignore_matchers)
+
+def get_output_filename():
+    base_name = "collated"
+    extension = ".txt"
+    counter = 0
+    while True:
+        if counter == 0:
+            filename = f"{base_name}{extension}"
+        else:
+            filename = f"{base_name}{counter}{extension}"
+        if not os.path.exists(filename):
+            return filename
+        counter += 1
+
+def collate_files(directories, output, extensions):
+    for directory in directories:
+        abs_directory = os.path.abspath(directory)
+        gitignore_matchers = load_gitignore_files(abs_directory)
+        for root, _, files in os.walk(abs_directory):
+            for file in files:
+                if any(file.endswith(ext) for ext in extensions):
+                    file_path = os.path.join(root, file)
+                    if not is_file_ignored_by_gitignore(file_path, gitignore_matchers):
+                        relative_path = os.path.relpath(file_path, os.getcwd())
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                output.write(f"// {relative_path}\n")
+                                output.write(f.read())
+                                output.write("\n\n")
+                        except UnicodeDecodeError:
+                            print(f"Warning: Unable to read {file_path} as text. Skipping.", file=sys.stderr)
+
+def parse_extensions(extensions_string):
+    return [ext.strip().lower() for ext in extensions_string.replace("'", "").replace('"', '').split(',') if ext.strip()]
+
+def main():
+    parser = argparse.ArgumentParser(description="Collate files from multiple directories.")
+    parser.add_argument("directories", nargs="+", help="List of directories to process")
+    parser.add_argument("-o", "--output", help="Specify output file")
+    parser.add_argument("-e", "--extensions", default=".py,.js", help="Comma-separated list of file extensions to include (default: .py,.js)")
+    parser.add_argument("-O", "--stdout", action="store_true", help="Output to stdout instead of a file")
+    args = parser.parse_args()
+
+    extensions = parse_extensions(args.extensions)
+    
+    if not extensions:
+        print("Error: No valid extensions provided. Using default extensions (.py, .js)", file=sys.stderr)
+        extensions = ['.py', '.js']
+
+    if args.stdout:
+        collate_files(args.directories, sys.stdout, extensions)
+        print(f"Extensions processed: {', '.join(extensions)}", file=sys.stderr)
+    else:
+        output_file = args.output if args.output else get_output_filename()
+        with open(output_file, 'w') as output:
+            collate_files(args.directories, output, extensions)
+        print(f"Collation complete. Output written to {output_file}", file=sys.stderr)
+        print(f"Extensions processed: {', '.join(extensions)}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
