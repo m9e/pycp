@@ -5,32 +5,36 @@ import sys
 import pyperclip
 import argparse
 from gitignore_parser import parse_gitignore
+
 def get_args():
     parser = argparse.ArgumentParser(description="Copy file contents to clipboard.")
     parser.add_argument('files', nargs='+', help="Files to process")
     parser.add_argument('--ignore-ignore', action='store_true', help="Ignore .gitignore files")
     return parser.parse_args()
+
 def find_file(filename):
     if os.path.isabs(filename):
         if os.path.exists(filename) and os.path.isfile(filename):
             return filename
         else:
-            print(f"File not found or is a directory: {filename}")
+            print(f"File not found or is a directory: {filename}", file=sys.stderr)
             return None
     else:
         potential_path = os.path.join(os.getcwd(), filename)
         if os.path.exists(potential_path) and os.path.isfile(potential_path):
             return potential_path
         else:
-            print(f"File not found or is a directory: {filename}")
+            print(f"File not found or is a directory: {filename}", file=sys.stderr)
             return None
+
 def read_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
             return file.readlines()
     except Exception as e:
-        print(f"Error reading file {filepath}: {str(e)}")
+        print(f"Error reading file {filepath}: {str(e)}", file=sys.stderr)
         return []
+
 def get_comment_prefix(filepath):
     if filepath.endswith('.js'):
         return '//'
@@ -38,6 +42,7 @@ def get_comment_prefix(filepath):
         return '#'
     else:
         return '#'
+
 def load_gitignore_files(directory):
     gitignore_matchers = []
     current_dir = directory
@@ -51,8 +56,10 @@ def load_gitignore_files(directory):
     if os.path.exists(cwd_gitignore_path):
         gitignore_matchers.append(parse_gitignore(cwd_gitignore_path))
     return gitignore_matchers
+
 def is_file_ignored_by_gitignore(file_path, gitignore_matchers):
     return any(matcher(file_path) for matcher in gitignore_matchers)
+
 def process_files(files, ignore_ignore):
     all_contents = []
     gitignore_matchers = [] if ignore_ignore else load_gitignore_files(os.getcwd())
@@ -60,7 +67,6 @@ def process_files(files, ignore_ignore):
         file_path = find_file(file)
         if file_path:
             is_ignored = is_file_ignored_by_gitignore(file_path, gitignore_matchers)
-            print(f"File {file}: {'not ignored' if ignore_ignore or not is_ignored else 'ignored'}", file=sys.stderr)
             if ignore_ignore or not is_ignored:
                 lines = read_file(file_path)
                 relative_path = os.path.relpath(file_path, os.getcwd())
@@ -70,19 +76,16 @@ def process_files(files, ignore_ignore):
                     lines.insert(0, f"{comment_prefix} {relative_path}\n")
                 all_contents.extend(lines)
                 all_contents.append("\n")
-            else:
-                print(f"Skipping file {file}: ignored by .gitignore")
-        else:
-            print(f"Skipping file {file}: not found or is a directory")
 
     if all_contents:
         try:
             pyperclip.copy(''.join(all_contents))
             print("Copied to clipboard.")
         except Exception as e:
-            print(f"Error copying to clipboard: {str(e)}")
+            print(f"Error copying to clipboard: {str(e)}", file=sys.stderr)
     else:
-        print("No contents to copy.")
+        print("No contents to copy.", file=sys.stderr)
+
 if __name__ == "__main__":
     args = get_args()
     process_files(args.files, args.ignore_ignore)
