@@ -30,10 +30,10 @@ def find_file(filename):
 def read_file(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as file:
-            return file.readlines()
+            return file.read()  # Read the entire file as a single string
     except Exception as e:
         print(f"Error reading file {filepath}: {str(e)}", file=sys.stderr)
-        return []
+        return ""
 
 def get_comment_prefix_suffix(filepath):
     """
@@ -83,9 +83,11 @@ def process_files(files, ignore_ignore):
         if file_path:
             is_ignored = is_file_ignored_by_gitignore(file_path, gitignore_matchers)
             if ignore_ignore or not is_ignored:
-                lines = read_file(file_path)
+                content = read_file(file_path)
                 relative_path = os.path.relpath(file_path, os.getcwd())
                 comment_prefix, comment_suffix = get_comment_prefix_suffix(file_path)
+                
+                lines = content.splitlines(True)  # Keep the newlines
                 
                 # Check if the first line is a shebang
                 if lines and lines[0].startswith('#!'):
@@ -99,13 +101,12 @@ def process_files(files, ignore_ignore):
                     if not any(relative_path in line for line in check_lines):
                         lines.insert(0, f"{comment_prefix} {relative_path} {comment_suffix}\n")
                 
-                all_contents.extend(lines)
-                all_contents.append("\n")
+                all_contents.append(''.join(lines))
+        all_contents.append('\n')  # Add a newline between files
 
     if all_contents:
         try:
-            # Add a blank line between files
-            clipboard_content = '\n'.join(all_contents)
+            clipboard_content = ''.join(all_contents)
             pyperclip.copy(clipboard_content)
             print("Copied to clipboard.")
         except Exception as e:

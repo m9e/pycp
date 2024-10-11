@@ -1,31 +1,74 @@
 #!/usr/bin/env python
 
-"""collate files from multiple directories with gitignore support and headers,
+"""collate files from multiple directories with improved gitignore support and headers,
 extremely useful for passing many files to LLMs
-
 """
 
 import os
 import sys
 import argparse
 from gitignore_parser import parse_gitignore
+from typing import List, Tuple
+from pathlib import Path
+
+try:
+    import tiktoken
+except ImportError:
+    # tiktoken is not installed, functionality requiring it may be limited
+    tiktoken = None
+
+
+def get_comment_prefix_suffix(filepath: str) -> Tuple[str, str]:
+    """
+    Returns the appropriate comment prefix and suffix based on the file extension.
+    """
+    extension_to_comment = {
+        '.js': ('//', ''),
+        '.py': ('#', ''),
+        '.java': ('//', ''),
+        '.c': ('//', ''),
+        '.cpp': ('//', ''),
+        '.h': ('//', ''),
+        '.sh': ('#', ''),
+        '.rb': ('#', ''),
+        '.php': ('//', ''),
+        '.sql': ('--', ''),
+        '.html': ('<!--', '-->'),
+        '.xml': ('<!--', '-->'),
+        '.md': ('<!--', '-->'),
+    }
+    
+    _, ext = os.path.splitext(filepath)
+    return extension_to_comment.get(ext.lower(), ('//', ''))
 
 def load_gitignore_files(directory):
-    gitignore_matchers = []
-    current_dir = directory
-    while current_dir != os.path.dirname(current_dir):  # Stop at the root directory
-        gitignore_path = os.path.join(current_dir, '.gitignore')
-        if os.path.exists(gitignore_path):
-            gitignore_matchers.append(parse_gitignore(gitignore_path))
-        current_dir = os.path.dirname(current_dir)
+    gitignore_data = []
+    current_dir = Path(directory).resolve()
+    while current_dir != current_dir.parent:  # Stop at the root directory
+        gitignore_path = current_dir / '.gitignore'
+        if gitignore_path.exists():
+            gitignore_data.append((parse_gitignore(str(gitignore_path)), current_dir))
+        current_dir = current_dir.parent
     # Check the current working directory's .gitignore
-    cwd_gitignore_path = os.path.join(os.getcwd(), '.gitignore')
-    if os.path.exists(cwd_gitignore_path):
-        gitignore_matchers.append(parse_gitignore(cwd_gitignore_path))
-    return gitignore_matchers
+    cwd_gitignore_path = Path.cwd() / '.gitignore'
+    if cwd_gitignore_path.exists():
+        gitignore_data.append((parse_gitignore(str(cwd_gitignore_path)), Path.cwd()))
+    return gitignore_data
 
-def is_file_ignored_by_gitignore(file_path, gitignore_matchers):
-    return any(matcher(file_path) for matcher in gitignore_matchers)
+def is_ignored(path, gitignore_data):
+    """
+    Check if a file or directory should be ignored based on gitignore rules.
+    """
+    path = Path(path).resolve()
+    for matcher, base_path in gitignore_data:
+        try:
+            relative_path = path.relative_to(base_path)
+            if matcher(str(relative_path)):
+                return True
+        except ValueError:
+            # path is not relative to this gitignore's base path, skip it
+            continue
+    return False
 
 def get_output_filename():
     base_name = "collated"
@@ -40,33 +83,65 @@ def get_output_filename():
             return filename
         counter += 1
 
-def collate_files(directories, output, extensions):
-    for directory in directories:
-        abs_directory = os.path.abspath(directory)
-        gitignore_matchers = load_gitignore_files(abs_directory)
-        for root, _, files in os.walk(abs_directory):
-            for file in files:
-                if any(file.endswith(ext) for ext in extensions):
-                    file_path = os.path.join(root, file)
-                    if not is_file_ignored_by_gitignore(file_path, gitignore_matchers):
-                        relative_path = os.path.relpath(file_path, os.getcwd())
-                        try:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                output.write(f"// {relative_path}\n")
-                                output.write(f.read())
-                                output.write("\n\n")
-                        except UnicodeDecodeError:
-                            print(f"Warning: Unable to read {file_path} as text. Skipping.", file=sys.stderr)
+def collate_files(paths: List[str], output, extensions: List[str], model: str = "gpt-4o", count_tokens: bool = False, no_collate: bool = False):
+    total_tokens = 0
+    for path in paths:
+        abs_path = Path(path).resolve()
+        gitignore_data = load_gitignore_files(abs_path)
+        
+        if abs_path.is_file():
+            total_tokens += process_file(abs_path, output, extensions, gitignore_data, model, count_tokens, no_collate)
+        elif abs_path.is_dir():
+            for root, dirs, files in os.walk(abs_path):
+                # Filter out ignored directories
+                dirs[:] = [d for d in dirs if not is_ignored(Path(root) / d, gitignore_data)]
+                for file in files:
+                    file_path = Path(root) / file
+                    total_tokens += process_file(file_path, output, extensions, gitignore_data, model, count_tokens, no_collate)
+    
+    if count_tokens:
+        print(f"Total tokens: {total_tokens}", file=sys.stderr)
+
+def process_file(file_path: Path, output, extensions: List[str], gitignore_data, model: str, count_tokens: bool, no_collate: bool) -> int:
+    if file_path.suffix.lower() in extensions and not is_ignored(file_path, gitignore_data):
+        relative_path = file_path.relative_to(Path.cwd())
+        try:
+            with file_path.open('r', encoding='utf-8') as f:
+                content = f.read()
+                lines = content.splitlines(True)  # Keep the newlines
+                comment_prefix, comment_suffix = get_comment_prefix_suffix(str(file_path))
+                
+                if count_tokens:
+                    tokens = len(tiktoken.encoding_for_model(model).encode(content))
+                    return tokens
+
+                if not no_collate:
+                    # Check if the first line is a shebang
+                    if lines and lines[0].startswith('#!'):
+                        shebang_line = lines.pop(0)
+                        output.write(shebang_line)
+                        output.write(f"{comment_prefix} {relative_path} {comment_suffix}\n")
+                        output.write(''.join(lines))
+                    else:
+                        output.write(f"{comment_prefix} {relative_path} {comment_suffix}\n")
+                        output.write(content)
+                    output.write("\n\n")
+        except UnicodeDecodeError:
+            print(f"Warning: Unable to read {file_path} as text. Skipping.", file=sys.stderr)
+    return 0
 
 def parse_extensions(extensions_string):
-    return [ext.strip().lower() for ext in extensions_string.replace("'", "").replace('"', '').split(',') if ext.strip()]
+    return [f".{ext.strip().lower().lstrip('.')}" for ext in extensions_string.replace("'", "").replace('"', '').split(',') if ext.strip()]
 
 def main():
-    parser = argparse.ArgumentParser(description="Collate files from multiple directories.")
-    parser.add_argument("directories", nargs="+", help="List of directories to process")
+    parser = argparse.ArgumentParser(description="Collate files from multiple directories and/or individual files.")
+    parser.add_argument("paths", nargs="+", help="List of directories and/or files to process")
     parser.add_argument("-o", "--output", help="Specify output file")
     parser.add_argument("-e", "--extensions", default=".py,.js", help="Comma-separated list of file extensions to include (default: .py,.js)")
     parser.add_argument("-O", "--stdout", action="store_true", help="Output to stdout instead of a file")
+    parser.add_argument("-t", "--count-tokens", action="store_true", help="Count tokens in processed files")
+    parser.add_argument("-n", "--no-collate", action="store_true", help="Don't collate, just count tokens (implies -t)")
+    parser.add_argument("-m", "--model", default="gpt-4o", help="Model to use for tiktoken (default: gpt-4o)")
     args = parser.parse_args()
 
     extensions = parse_extensions(args.extensions)
@@ -75,13 +150,22 @@ def main():
         print("Error: No valid extensions provided. Using default extensions (.py, .js)", file=sys.stderr)
         extensions = ['.py', '.js']
 
-    if args.stdout:
-        collate_files(args.directories, sys.stdout, extensions)
+    count_tokens = args.count_tokens or args.no_collate
+    no_collate = args.no_collate
+
+    if not tiktoken and count_tokens:
+        print("count_tokens set but tiktoken library unavailable; install to use", file=sys.stderr)
+        exit(-1)
+
+    if args.stdout and not no_collate:
+        collate_files(args.paths, sys.stdout, extensions, model=args.model, count_tokens=count_tokens, no_collate=no_collate)
         print(f"Extensions processed: {', '.join(extensions)}", file=sys.stderr)
+    elif no_collate:
+        collate_files(args.paths, None, extensions, model=args.model, count_tokens=True, no_collate=True)
     else:
         output_file = args.output if args.output else get_output_filename()
         with open(output_file, 'w') as output:
-            collate_files(args.directories, output, extensions)
+            collate_files(args.paths, output, extensions, model=args.model, count_tokens=count_tokens, no_collate=no_collate)
         print(f"Collation complete. Output written to {output_file}", file=sys.stderr)
         print(f"Extensions processed: {', '.join(extensions)}", file=sys.stderr)
 
